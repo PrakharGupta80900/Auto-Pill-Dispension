@@ -9,22 +9,6 @@ const deviceSchema = new mongoose.Schema(
       trim: true,
       index: true
     },
-    pairingCode: {
-      type: String,
-      default: null,
-      trim: true,
-      index: true
-    },
-    pairingCodeExpiresAt: {
-      type: Date,
-      default: null
-    },
-    owner: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-      index: true
-    },
     name: {
       type: String,
       default: "Smart Pill Dispenser",
@@ -43,10 +27,6 @@ const deviceSchema = new mongoose.Schema(
       type: String,
       default: null,
       trim: true
-    },
-    setupCompletedAt: {
-      type: Date,
-      default: null
     }
   },
   {

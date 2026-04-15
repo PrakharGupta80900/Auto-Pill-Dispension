@@ -8,6 +8,7 @@ const USER_KEY = "smart-pill-user";
 const emptyScheduleForm = {
   medicineName: "",
   dosage: "1 tablet",
+  deviceId: "esp32-001",
   compartment: 1,
   time: "08:00",
   daysOfWeek: [],
@@ -41,12 +42,41 @@ const emptyDashboard = {
   recentEvents: []
 };
 
-const emptyDevicePairForm = {
-  pairingCode: "",
-  name: "Home Pill Dispenser"
+const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+let sharedAudioContext = null;
+
+const getSharedAudioContext = () => {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+  if (!AudioContextClass) {
+    return null;
+  }
+
+  if (!sharedAudioContext || sharedAudioContext.state === "closed") {
+    sharedAudioContext = new AudioContextClass();
+  }
+
+  return sharedAudioContext;
 };
 
-const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const unlockAudioContext = async () => {
+  const context = getSharedAudioContext();
+
+  if (!context) {
+    return false;
+  }
+
+  if (context.state === "suspended") {
+    try {
+      await context.resume();
+    } catch {
+      return false;
+    }
+  }
+
+  return context.state === "running";
+};
 
 const formatDateTime = (value) => {
   if (!value) {
@@ -63,6 +93,7 @@ const formatDateTime = (value) => {
 const mapScheduleToForm = (schedule) => ({
   medicineName: schedule.medicineName || "",
   dosage: schedule.dosage || "1 tablet",
+  deviceId: schedule.deviceId || "esp32-001",
   compartment: schedule.compartment || 1,
   time: schedule.time || "08:00",
   daysOfWeek: Array.isArray(schedule.daysOfWeek) ? schedule.daysOfWeek : [],
@@ -81,13 +112,12 @@ const StatCard = ({ label, value, accent, action }) => (
 );
 
 const playAlertTone = () => {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const context = getSharedAudioContext();
 
-  if (!AudioContextClass) {
+  if (!context || context.state !== "running") {
     return;
   }
 
-  const context = new AudioContextClass();
   const gainNode = context.createGain();
   const oscillator = context.createOscillator();
 
@@ -112,17 +142,15 @@ const playAlertTone = () => {
 
   oscillator.start(now);
   oscillator.stop(stopAt);
-  oscillator.onended = () => context.close();
 };
 
 const playMissedAlertTone = () => {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const context = getSharedAudioContext();
 
-  if (!AudioContextClass) {
+  if (!context || context.state !== "running") {
     return;
   }
 
-  const context = new AudioContextClass();
   const gainNode = context.createGain();
   const oscillator = context.createOscillator();
 
@@ -143,7 +171,6 @@ const playMissedAlertTone = () => {
 
   oscillator.start(now);
   oscillator.stop(now + 2.1);
-  oscillator.onended = () => context.close();
 };
 
 const notify = (title, body) => {
@@ -321,10 +348,6 @@ export default function App() {
   const [profileForm, setProfileForm] = useState(() => createProfileForm(readStoredUser()));
   const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [missedAlertsOpen, setMissedAlertsOpen] = useState(false);
-  const [devices, setDevices] = useState([]);
-  const [devicePairForm, setDevicePairForm] = useState(emptyDevicePairForm);
-  const [deviceSubmitting, setDeviceSubmitting] = useState(false);
-  const [pairDeviceOpen, setPairDeviceOpen] = useState(false);
   const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
   const [loading, setLoading] = useState(Boolean(readStoredUser()));
   const [submitting, setSubmitting] = useState(false);
@@ -335,12 +358,8 @@ export default function App() {
 
   const loadDashboard = async () => {
     setLoading(true);
-    const [dashboardResponse, devicesResponse] = await Promise.all([
-      api.get("/dashboard"),
-      api.get("/devices/mine")
-    ]);
+    const dashboardResponse = await api.get("/dashboard");
     setDashboard(dashboardResponse.data);
-    setDevices(devicesResponse.data);
     setLoading(false);
   };
 
@@ -369,9 +388,23 @@ export default function App() {
       Notification.requestPermission().catch(() => {});
     }
 
+    const unlock = () => {
+      unlockAudioContext().catch(() => {});
+    };
+
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("keydown", unlock);
+    window.addEventListener("touchstart", unlock, { passive: true });
+
     bootstrapUser().catch(() => {
       setLoading(false);
     });
+
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      window.removeEventListener("touchstart", unlock);
+    };
   }, []);
 
   useEffect(() => {
@@ -457,11 +490,6 @@ export default function App() {
   const handleProfileChange = (event) => {
     const { name, value } = event.target;
     setProfileForm((current) => ({ ...current, [name]: value }));
-  };
-
-  const handleDevicePairChange = (event) => {
-    const { name, value } = event.target;
-    setDevicePairForm((current) => ({ ...current, [name]: value }));
   };
 
   const toggleDay = (index) => {
@@ -576,6 +604,7 @@ export default function App() {
     const payload = {
       medicineName: form.medicineName,
       dosage: form.dosage,
+      deviceId: form.deviceId?.trim() || "esp32-001",
       compartment: Number(form.compartment),
       time: form.time,
       daysOfWeek: form.daysOfWeek,
@@ -653,28 +682,6 @@ export default function App() {
       }
 
       setMessage(error.response?.data?.error || "Failed to silence buzzer.");
-    }
-  };
-
-  const handleDevicePairSubmit = async (event) => {
-    event.preventDefault();
-    setDeviceSubmitting(true);
-
-    try {
-      const { data } = await api.post("/devices/claim", devicePairForm);
-      setDevices((current) => [data.device, ...current.filter((device) => device.deviceId !== data.device.deviceId)]);
-      setDevicePairForm(emptyDevicePairForm);
-      setPairDeviceOpen(false);
-      setMessage(data.message || "Device paired successfully.");
-    } catch (error) {
-      if (error.response?.status === 401) {
-        handleLogout();
-        return;
-      }
-
-      setMessage(error.response?.data?.error || "Failed to pair device.");
-    } finally {
-      setDeviceSubmitting(false);
     }
   };
 
@@ -758,66 +765,13 @@ export default function App() {
       </section>
 
       <section className="dashboard-actions-bar">
-        <button className="primary-button" type="button" onClick={() => setPairDeviceOpen((current) => !current)}>
-          {pairDeviceOpen ? "Close Pair Device" : "+ Pair Device"}
-        </button>
         <button
-          className="ghost-button"
+          className="primary-button"
           type="button"
-          disabled={!devices.length}
           onClick={() => setScheduleFormOpen((current) => !current)}
         >
           {scheduleFormOpen ? "Close Schedule" : "+ Schedule"}
         </button>
-        {!devices.length ? <p className="dashboard-actions-note">Pair a device first to create schedules.</p> : null}
-      </section>
-
-      <section className="content-grid device-onboarding-grid">
-        {pairDeviceOpen ? (
-          <section className="panel device-pair-panel">
-            <div className="panel-heading">
-              <h2>First-Time Device Connection</h2>
-              <p>Power on the dispenser, join its setup hotspot, then enter the pairing code shown on the device setup screen here.</p>
-            </div>
-
-            <form className="auth-form" onSubmit={handleDevicePairSubmit}>
-              <label>
-                <span>Pairing code</span>
-                <input name="pairingCode" placeholder="6-digit code" value={devicePairForm.pairingCode} onChange={handleDevicePairChange} required />
-              </label>
-              <label>
-                <span>Device name</span>
-                <input name="name" placeholder="Kitchen dispenser" value={devicePairForm.name} onChange={handleDevicePairChange} required />
-              </label>
-              <button className="primary-button" type="submit" disabled={deviceSubmitting}>
-                {deviceSubmitting ? "Pairing..." : "Pair device"}
-              </button>
-            </form>
-          </section>
-        ) : null}
-
-        <section className="panel list-panel">
-          <div className="panel-heading">
-            <h2>Your Devices</h2>
-            <p>{devices.length ? `${devices.length} paired device(s)` : "No devices paired yet"}</p>
-          </div>
-
-          <div className="schedule-list">
-            {devices.map((device) => (
-              <article key={device.deviceId} className="schedule-item device-item">
-                <div>
-                  <strong>{device.name}</strong>
-                  <p>{device.deviceId}</p>
-                </div>
-                <div className="schedule-meta">
-                  <span className={`status-pill ${device.paired ? "taken" : "missed"}`}>{device.paired ? "paired" : "pending"}</span>
-                  <small>Last seen: {formatDateTime(device.lastSeenAt)}</small>
-                </div>
-              </article>
-            ))}
-            {!devices.length ? <p>Pair your first dispenser using the 6-digit code shown during device setup.</p> : null}
-          </div>
-        </section>
       </section>
 
       <section className="stats-grid">
@@ -905,7 +859,7 @@ export default function App() {
       ) : null}
 
       <section className="content-grid">
-        {scheduleFormOpen && devices.length ? (
+        {scheduleFormOpen ? (
           <form className="panel schedule-form" onSubmit={handleSubmit}>
             <div className="panel-heading">
               <h2>{editingScheduleId ? "Edit Schedule" : "Create Schedule"}</h2>
@@ -920,6 +874,10 @@ export default function App() {
               <label>
                 <span>Dosage</span>
                 <input name="dosage" value={form.dosage} onChange={handleScheduleChange} required />
+              </label>
+              <label>
+                <span>Device ID</span>
+                <input name="deviceId" value={form.deviceId} onChange={handleScheduleChange} required />
               </label>
               <label>
                 <span>Compartment</span>
@@ -966,7 +924,7 @@ export default function App() {
           <section className="panel schedule-form schedule-empty-panel">
             <div className="panel-heading">
               <h2>Schedule Setup</h2>
-              <p>{devices.length ? "Use + Schedule to add a medicine plan for your paired dispenser." : "Pair a device first, then schedule creation will become available."}</p>
+              <p>Use + Schedule to add a medicine plan for your dispenser.</p>
             </div>
           </section>
         )}
@@ -982,7 +940,7 @@ export default function App() {
               <article key={schedule._id} className="schedule-item">
                 <div>
                   <strong>{schedule.medicineName}</strong>
-                  <p>{schedule.dosage} • Compartment {schedule.compartment}</p>
+                  <p>{schedule.dosage} • Device {schedule.deviceId || "esp32-001"} • Compartment {schedule.compartment}</p>
                 </div>
                 <div className="schedule-meta">
                   <span>{schedule.time} IST</span>

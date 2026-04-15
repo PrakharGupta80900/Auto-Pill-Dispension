@@ -201,6 +201,7 @@ const buildDeviceScheduleSnapshot = async () => {
     version: versionSource || new Date(0).toISOString(),
     schedules: schedules.map((schedule) => ({
       scheduleId: schedule._id,
+      deviceId: schedule.deviceId || "esp32-001",
       medicineName: schedule.medicineName,
       dosage: schedule.dosage,
       compartment: schedule.compartment,

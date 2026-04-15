@@ -31,6 +31,12 @@ const scheduleSchema = new mongoose.Schema(
       trim: true,
       default: "default-user"
     },
+    deviceId: {
+      type: String,
+      trim: true,
+      default: "esp32-001",
+      index: true
+    },
     medicineName: {
       type: String,
       required: true,
@@ -87,5 +93,6 @@ const scheduleSchema = new mongoose.Schema(
 
 scheduleSchema.index({ isActive: 1, time: 1 });
 scheduleSchema.index({ owner: 1, time: 1 });
+scheduleSchema.index({ deviceId: 1, time: 1 });
 
 module.exports = mongoose.model("Schedule", scheduleSchema);

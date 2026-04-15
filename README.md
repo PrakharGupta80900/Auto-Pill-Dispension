@@ -59,14 +59,12 @@ See `docs/iot-build-from-scratch.md` for the full ESP32 hardware, wiring, firmwa
 
 ## First-time customer connection
 
-The dispenser now supports a first-time pairing flow:
+The dispenser setup is now direct:
 
 1. Power on the device.
-2. If it is not configured yet, it starts a setup hotspot named `SmartPill-Setup`.
-3. The customer joins that hotspot on a phone or laptop.
-4. They open the device setup page, enter home Wi-Fi details, and note the 6-digit pairing code.
-5. They log into the dashboard and pair the device using that code.
-6. The device starts normal operation and reports heartbeats to the backend.
+2. Ensure the ESP32 can reach your backend API URL.
+3. Log into the dashboard and create schedules.
+4. The device starts normal operation and reports heartbeats to the backend.
 
 ## Current flow
 

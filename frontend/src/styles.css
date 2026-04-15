@@ -573,13 +573,16 @@ input {
 }
 
 .schedule-form .day-pill {
-  background: rgba(34, 48, 45, 0.12);
-  color: #22302d;
+  background: rgba(197, 225, 165, 0.12);
+  color: #eef6e0;
+  border: 1px solid rgba(197, 225, 165, 0.28);
 }
 
 .schedule-form .day-pill.active {
-  background: #264653;
-  color: #f4f7ec;
+  background: #c5e1a5;
+  color: #17211f;
+  border-color: #c5e1a5;
+  font-weight: 700;
 }
 
 .schedule-form .ghost-button {

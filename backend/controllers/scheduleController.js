@@ -10,6 +10,16 @@ const {
   getActiveAlerts
 } = require("../services/doseScheduler");
 
+const normalizeDeviceId = (value) => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim();
+};
+
+const resolveScheduleDeviceId = (schedule) => normalizeDeviceId(schedule?.deviceId) || "esp32-001";
+
 const resolveEventForDeviceReport = async ({ eventId, scheduleId, scheduledTime }) => {
   let event = null;
   let schedule = null;
@@ -60,6 +70,7 @@ exports.createSchedule = async (req, res) => {
       daysOfWeek,
       alertWindowMinutes,
       pillCount,
+      deviceId,
       caregiver
     } = req.body;
 
@@ -76,6 +87,7 @@ exports.createSchedule = async (req, res) => {
     const schedule = await Schedule.create({
       owner: req.user._id,
       userId: req.user.email,
+      deviceId: normalizeDeviceId(deviceId) || "esp32-001",
       medicineName,
       dosage,
       compartment,
@@ -111,7 +123,16 @@ exports.updateSchedule = async (req, res) => {
       return res.status(400).json({ error: "Select at least one active day" });
     }
 
-    const updated = await Schedule.findOneAndUpdate({ _id: req.params.id, owner: req.user._id }, { ...req.body, alertWindowMinutes: 2 }, {
+    const payload = {
+      ...req.body,
+      alertWindowMinutes: 2
+    };
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "deviceId")) {
+      payload.deviceId = normalizeDeviceId(req.body.deviceId) || "esp32-001";
+    }
+
+    const updated = await Schedule.findOneAndUpdate({ _id: req.params.id, owner: req.user._id }, payload, {
       new: true,
       runValidators: true
     });
@@ -176,10 +197,15 @@ exports.getActiveAlerts = async (req, res) => {
 
 exports.getDeviceAlertState = async (req, res) => {
   try {
-    const event = await DoseEvent.findById(req.params.eventId);
+    const deviceId = normalizeDeviceId(req.query.deviceId || req.headers["x-device-id"]);
+    const event = await DoseEvent.findById(req.params.eventId).populate("scheduleId");
 
     if (!event) {
       return res.status(404).json({ error: "Dose event not found" });
+    }
+
+    if (deviceId && resolveScheduleDeviceId(event.scheduleId) !== deviceId) {
+      return res.status(404).json({ error: "Dose event not found for this device" });
     }
 
     res.json({
@@ -226,12 +252,28 @@ exports.silenceAlert = async (req, res) => {
 
 exports.getDeviceQueue = async (req, res) => {
   try {
-    const queue = await getActiveDoseQueue(new Date());
+    const now = new Date();
+    const deviceId = normalizeDeviceId(req.query.deviceId || req.headers["x-device-id"]);
+
+    const queue = await getActiveDoseQueue(now);
+
+    // ✅ ONLY scheduled events AND due time
+    const filteredQueue = queue.filter(({ event }) => {
+      return (
+        event.status === "scheduled" &&
+        new Date(event.scheduledTime) <= now
+      );
+    });
+
+    const deviceQueue = deviceId
+      ? filteredQueue.filter(({ schedule }) => resolveScheduleDeviceId(schedule) === deviceId)
+      : filteredQueue;
 
     res.json(
-      queue.map(({ schedule, event }) => ({
+      deviceQueue.map(({ schedule, event }) => ({
         eventId: event._id,
         scheduleId: schedule._id,
+        deviceId: resolveScheduleDeviceId(schedule),
         medicineName: schedule.medicineName,
         dosage: schedule.dosage,
         pillCount: schedule.pillCount,
@@ -240,8 +282,8 @@ exports.getDeviceQueue = async (req, res) => {
         status: event.status,
         hardware: {
           servoAction: "rotate",
-          buzzer: event.alertState?.buzzer !== false,
-          led: event.alertState?.led !== false,
+          buzzer: Boolean(event.alertState?.buzzer),
+          led: Boolean(event.alertState?.led),
           irSensorRequired: true
         }
       }))
@@ -262,24 +304,47 @@ exports.getDeviceSchedules = async (req, res) => {
 
 exports.reportDispense = async (req, res) => {
   try {
-    const { scheduleId, eventId, scheduledTime, occurredAt, notes } = req.body;
-    const { event, schedule } = await resolveEventForDeviceReport({ eventId, scheduleId, scheduledTime });
+    const { eventId, deviceId, medicineDetected } = req.body;
+
+    const event = await DoseEvent.findById(eventId).populate("scheduleId");
 
     if (!event) {
-      return res.status(400).json({ error: "eventId or scheduleId is required" });
+      return res.status(404).json({ error: "Event not found" });
     }
 
-    if (scheduleId && !schedule) {
-      return res.status(404).json({ error: "Schedule not found" });
+    const normalizedDeviceId = normalizeDeviceId(deviceId);
+
+    if (normalizedDeviceId && resolveScheduleDeviceId(event.scheduleId) !== normalizedDeviceId) {
+      return res.status(404).json({ error: "Event not found for this device" });
     }
 
-    event.status = "dispensed";
-    event.dispensedAt = occurredAt ? new Date(occurredAt) : scheduledTime ? new Date(scheduledTime) : new Date();
-  event.alertState = event.alertState || {};
-  event.alertState.buzzer = event.alertState.buzzer !== false;
-  event.alertState.led = true;
-    event.alertState.notificationSent = false;
-    event.notes = notes || event.notes;
+    // 🔥 IMPORTANT: prevent duplicate processing
+    if (event.status !== "scheduled") {
+      return res.json(event);
+    }
+
+    const detected = medicineDetected !== false;
+    event.alertState = event.alertState || {};
+
+    if (detected) {
+      event.status = "dispensed";
+      event.dispensedAt = new Date();
+      event.sensorState = "pill_detected";
+      event.alertState.buzzer = true;
+      event.alertState.led = true;
+    } else {
+      const schedule = await Schedule.findById(event.scheduleId?._id || event.scheduleId);
+      event.status = "missed";
+      event.sensorState = "pill_not_detected";
+      event.alertState.buzzer = false;
+      event.alertState.led = false;
+      event.notes = "Dispense reported but tray did not detect pill";
+
+      if (schedule) {
+        await markEventMissedAndNotify(event, schedule);
+      }
+    }
+
     await event.save();
 
     res.json(event);
@@ -287,20 +352,27 @@ exports.reportDispense = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.reportPickup = async (req, res) => {
   try {
-    const { eventId, scheduleId, scheduledTime, occurredAt, pickupDetected, sensorState } = req.body;
+    const { eventId, scheduleId, scheduledTime, occurredAt, pickupDetected, sensorState, deviceId } = req.body;
 
     if (!eventId && !scheduleId) {
       return res.status(400).json({ error: "eventId or scheduleId is required" });
     }
 
-    const { event } = await resolveEventForDeviceReport({ eventId, scheduleId, scheduledTime });
+    const { event, schedule } = await resolveEventForDeviceReport({ eventId, scheduleId, scheduledTime });
 
     if (!event) {
       return res.status(404).json({ error: "Dose event not found" });
     }
+
+    const normalizedDeviceId = normalizeDeviceId(deviceId);
+
+    if (normalizedDeviceId && resolveScheduleDeviceId(schedule) !== normalizedDeviceId) {
+      return res.status(404).json({ error: "Dose event not found for this device" });
+    }
+
+    event.alertState = event.alertState || {};
 
     if (pickupDetected) {
       event.status = "taken";
@@ -313,10 +385,9 @@ exports.reportPickup = async (req, res) => {
       event.sensorState = sensorState || "not_picked_up";
 
       if (event.dispensedAt) {
-        const schedule = await Schedule.findById(event.scheduleId);
         const deadline = new Date(event.dispensedAt.getTime() + 2 * 60 * 1000);
 
-        if (new Date() >= deadline) {
+        if (schedule && new Date() >= deadline) {
           await markEventMissedAndNotify(event, schedule);
         }
       }

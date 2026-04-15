@@ -39,7 +39,7 @@ const doseEventSchema = new mongoose.Schema(
     },
     sensorState: {
       type: String,
-      enum: ["unknown", "pill_detected", "pickup_confirmed", "not_picked_up"],
+      enum: ["unknown", "pill_detected", "pickup_confirmed", "not_picked_up", "pill_not_detected"],
       default: "unknown"
     },
     alertState: {

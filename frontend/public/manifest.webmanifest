@@ -1,15 +1,22 @@
 {
+  "id": "/",
   "name": "Smart Pill Dashboard",
   "short_name": "Smart Pill",
   "description": "Portable smart pill dispenser dashboard with schedules, alerts, and dose tracking.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "browser"],
   "orientation": "portrait-primary",
   "background_color": "#182622",
   "theme_color": "#1e4f43",
   "lang": "en",
-  "categories": ["medical", "health", "utilities"],
+  "prefer_related_applications": false,
+  "categories": [
+    "medical",
+    "health",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.svg",

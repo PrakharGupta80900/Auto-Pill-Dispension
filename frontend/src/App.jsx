@@ -354,6 +354,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const alertedEventsRef = useRef(new Set());
   const missedAlertedEventsRef = useRef(new Set());
+  const hasHydratedAlertsRef = useRef(false);
   const profileMenuRef = useRef(null);
 
   const loadDashboard = async () => {
@@ -435,8 +436,28 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!user || loading) {
+      return;
+    }
+
+    const activeIds = new Set(dashboard.activeAlerts.map((alert) => alert.eventId).filter(Boolean));
+    const missedIds = new Set(dashboard.missedAlerts.map((event) => event._id).filter(Boolean));
+
+    if (!hasHydratedAlertsRef.current) {
+      alertedEventsRef.current = activeIds;
+      missedAlertedEventsRef.current = missedIds;
+      hasHydratedAlertsRef.current = true;
+      return;
+    }
+
+    if (!dashboard.schedules.length) {
+      alertedEventsRef.current = activeIds;
+      missedAlertedEventsRef.current = missedIds;
+      return;
+    }
+
     dashboard.activeAlerts.forEach((alert) => {
-      if (alertedEventsRef.current.has(alert.eventId)) {
+      if (!alert.eventId || alertedEventsRef.current.has(alert.eventId)) {
         return;
       }
 
@@ -445,11 +466,9 @@ export default function App() {
       notify("Medicine time", `${alert.medicineName} is due now.`);
       setMessage(`Medicine due now: ${alert.medicineName}.`);
     });
-  }, [dashboard.activeAlerts]);
 
-  useEffect(() => {
     dashboard.missedAlerts.forEach((event) => {
-      if (missedAlertedEventsRef.current.has(event._id)) {
+      if (!event._id || missedAlertedEventsRef.current.has(event._id)) {
         return;
       }
 
@@ -458,7 +477,10 @@ export default function App() {
       notify("Missed medicine alert", `${event.medicineName} was not picked up within 2 minutes.`);
       setMessage(`Missed pickup alert for ${event.medicineName}. Software beep triggered.`);
     });
-  }, [dashboard.missedAlerts]);
+
+    alertedEventsRef.current = activeIds;
+    missedAlertedEventsRef.current = missedIds;
+  }, [user, loading, dashboard.activeAlerts, dashboard.missedAlerts, dashboard.schedules.length]);
 
   useEffect(() => {
     if (!dashboard.missedAlerts.length) {
@@ -557,6 +579,7 @@ export default function App() {
     setDashboard(emptyDashboard);
     alertedEventsRef.current.clear();
     missedAlertedEventsRef.current.clear();
+    hasHydratedAlertsRef.current = false;
     setProfileMenuOpen(false);
     setMessage("");
     setLoading(false);
@@ -654,6 +677,27 @@ export default function App() {
         handleLogout();
       }
       setMessage(error.response?.data?.error || "Failed to delete schedule.");
+    }
+  };
+
+  const handleDeleteDoseEvent = async (eventId, medicineName) => {
+    const confirmed = window.confirm(`Delete the recent dose event for ${medicineName}?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await api.delete(`/dose-events/${eventId}`);
+      setMessage(`Deleted recent event for ${medicineName}.`);
+      await loadDashboard();
+    } catch (error) {
+      if (error.response?.status === 401) {
+        handleLogout();
+        return;
+      }
+
+      setMessage(error.response?.data?.error || "Failed to delete dose event.");
     }
   };
 
@@ -973,6 +1017,7 @@ export default function App() {
             <span>Status</span>
             <span>Scheduled</span>
             <span>Taken</span>
+            <span>Actions</span>
           </div>
           {dashboard.recentEvents.map((event) => (
             <div className="event-row" key={event._id}>
@@ -980,6 +1025,11 @@ export default function App() {
               <span className={`status-pill ${event.status}`}>{event.status}</span>
               <span>{formatDateTime(event.scheduledTime)}</span>
               <span>{formatDateTime(event.takenAt)}</span>
+              <span className="event-actions">
+                <button className="danger-button" type="button" onClick={() => handleDeleteDoseEvent(event._id, event.medicineName)}>
+                  Delete
+                </button>
+              </span>
             </div>
           ))}
           {!dashboard.recentEvents.length && !loading ? <p>No dose events yet.</p> : null}

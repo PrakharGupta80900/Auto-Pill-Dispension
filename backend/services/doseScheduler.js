@@ -86,6 +86,7 @@ const getActiveAlerts = async (now = new Date()) => {
   await syncTodayDoseEvents(now);
 
   const activeEvents = await DoseEvent.find({
+    isDeleted: false,
     status: { $in: ["scheduled", "dispensed"] },
     scheduledTime: { $lte: now }
   })
@@ -117,6 +118,7 @@ const markMissedDoses = async (now = new Date()) => {
   await syncTodayDoseEvents(now);
 
   const pendingEvents = await DoseEvent.find({
+    isDeleted: false,
     status: { $in: ["scheduled", "dispensed"] }
   }).populate("scheduleId");
 
@@ -147,7 +149,7 @@ const buildDashboardMetrics = async (ownerId) => {
   const scheduleFilter = ownerId ? { owner: ownerId } : {};
   const schedules = await Schedule.find(scheduleFilter).sort({ time: 1 });
   const scheduleIds = schedules.map((schedule) => schedule._id);
-  const doseEventFilter = scheduleIds.length ? { scheduleId: { $in: scheduleIds } } : { _id: null };
+  const doseEventFilter = scheduleIds.length ? { scheduleId: { $in: scheduleIds }, isDeleted: false } : { _id: null };
 
   const [doseEvents, missedAlerts] = await Promise.all([
     DoseEvent.find(doseEventFilter).sort({ scheduledTime: -1 }).limit(50),

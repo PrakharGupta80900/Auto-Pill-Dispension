@@ -782,7 +782,12 @@ input:focus {
 }
 
 .event-panel .event-row {
-  grid-template-columns: 1fr 0.7fr 1fr 1fr;
+  grid-template-columns: 1fr 0.7fr 1fr 1fr auto;
+}
+
+.event-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .event-head {

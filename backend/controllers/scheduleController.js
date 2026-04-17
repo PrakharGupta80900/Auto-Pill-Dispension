@@ -25,7 +25,7 @@ const resolveEventForDeviceReport = async ({ eventId, scheduleId, scheduledTime 
   let schedule = null;
 
   if (eventId) {
-    event = await DoseEvent.findById(eventId);
+    event = await DoseEvent.findOne({ _id: eventId, isDeleted: false });
 
     if (event) {
       schedule = await Schedule.findById(event.scheduleId);
@@ -198,7 +198,7 @@ exports.getActiveAlerts = async (req, res) => {
 exports.getDeviceAlertState = async (req, res) => {
   try {
     const deviceId = normalizeDeviceId(req.query.deviceId || req.headers["x-device-id"]);
-    const event = await DoseEvent.findById(req.params.eventId).populate("scheduleId");
+    const event = await DoseEvent.findOne({ _id: req.params.eventId, isDeleted: false }).populate("scheduleId");
 
     if (!event) {
       return res.status(404).json({ error: "Dose event not found" });
@@ -223,7 +223,7 @@ exports.getDeviceAlertState = async (req, res) => {
 
 exports.silenceAlert = async (req, res) => {
   try {
-    const event = await DoseEvent.findById(req.params.eventId).populate("scheduleId");
+    const event = await DoseEvent.findOne({ _id: req.params.eventId, isDeleted: false }).populate("scheduleId");
 
     if (!event) {
       return res.status(404).json({ error: "Dose event not found" });
@@ -306,7 +306,7 @@ exports.reportDispense = async (req, res) => {
   try {
     const { eventId, deviceId, medicineDetected } = req.body;
 
-    const event = await DoseEvent.findById(eventId).populate("scheduleId");
+    const event = await DoseEvent.findOne({ _id: eventId, isDeleted: false }).populate("scheduleId");
 
     if (!event) {
       return res.status(404).json({ error: "Event not found" });
@@ -404,12 +404,40 @@ exports.getDoseEvents = async (req, res) => {
   try {
     const schedules = await Schedule.find({ owner: req.user._id }).select("_id");
     const scheduleIds = schedules.map((schedule) => schedule._id);
-    const doseEvents = await DoseEvent.find({ scheduleId: { $in: scheduleIds } })
+    const doseEvents = await DoseEvent.find({ scheduleId: { $in: scheduleIds }, isDeleted: false })
       .populate("scheduleId")
       .sort({ scheduledTime: -1 })
       .limit(100);
 
     res.json(doseEvents);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.deleteDoseEvent = async (req, res) => {
+  try {
+    const event = await DoseEvent.findOne({ _id: req.params.eventId, isDeleted: false }).populate("scheduleId");
+
+    if (!event) {
+      return res.status(404).json({ error: "Dose event not found" });
+    }
+
+    if (String(event.scheduleId?.owner) !== String(req.user._id)) {
+      return res.status(404).json({ error: "Dose event not found" });
+    }
+
+    event.isDeleted = true;
+    event.alertState = event.alertState || {};
+    event.alertState.buzzer = false;
+    event.alertState.led = false;
+
+    await event.save();
+
+    res.json({
+      message: "Dose event deleted",
+      eventId: event._id
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

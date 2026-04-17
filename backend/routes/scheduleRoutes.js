@@ -3,6 +3,7 @@ const { protect } = require("../middleware/authMiddleware");
 
 const {
   createSchedule,
+  deleteDoseEvent,
   deleteSchedule,
   getActiveAlerts,
   getDeviceAlertState,
@@ -28,6 +29,7 @@ router.put("/schedules/:id", protect, updateSchedule);
 router.delete("/schedules/:id", protect, deleteSchedule);
 
 router.get("/dose-events", protect, getDoseEvents);
+router.delete("/dose-events/:eventId", protect, deleteDoseEvent);
 
 router.get("/device/queue", getDeviceQueue);
 router.get("/device/alerts/:eventId/state", getDeviceAlertState);
